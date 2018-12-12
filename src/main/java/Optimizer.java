@@ -126,7 +126,7 @@ public class Optimizer {
         // stmt.executeQuery(query);
 
         // In case of no copartitioning of TB to TA
-        
+
 
     }
 
