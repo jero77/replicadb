@@ -1,8 +1,8 @@
 <component name="libraryTable">
   <library name="com.facebook.presto:presto-parser:0.213" type="repository">
-    <properties maven-id="com.facebook.presto:presto-parser:0.213" />
+    <properties maven-id="com.facebook.presto:presto-parser:0.215" />
     <CLASSES>
-      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.213/presto-parser-0.213.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.215/presto-parser-0.215.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/javax/inject/javax.inject/1/javax.inject-1.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/io/airlift/slice/0.36/slice-0.36.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/openjdk/jol/jol-core/0.2/jol-core-0.2.jar!/" />
@@ -13,10 +13,10 @@
       <root url="jar://$MAVEN_REPOSITORY$/com/google/j2objc/j2objc-annotations/1.1/j2objc-annotations-1.1.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/codehaus/mojo/animal-sniffer-annotations/1.14/animal-sniffer-annotations-1.14.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/antlr/antlr4-runtime/4.7.1/antlr4-runtime-4.7.1.jar!/" />
-      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.174/log-0.174.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.177/log-0.177.jar!/" />
     </CLASSES>
     <JAVADOC>
-      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.213/presto-parser-0.213-javadoc.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.215/presto-parser-0.215-javadoc.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/javax/inject/javax.inject/1/javax.inject-1-javadoc.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/io/airlift/slice/0.36/slice-0.36-javadoc.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/openjdk/jol/jol-core/0.2/jol-core-0.2-javadoc.jar!/" />
@@ -26,10 +26,10 @@
       <root url="jar://$MAVEN_REPOSITORY$/com/google/j2objc/j2objc-annotations/1.1/j2objc-annotations-1.1-javadoc.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/codehaus/mojo/animal-sniffer-annotations/1.14/animal-sniffer-annotations-1.14-javadoc.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/antlr/antlr4-runtime/4.7.1/antlr4-runtime-4.7.1-javadoc.jar!/" />
-      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.174/log-0.174-javadoc.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.177/log-0.177-javadoc.jar!/" />
     </JAVADOC>
     <SOURCES>
-      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.213/presto-parser-0.213-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/com/facebook/presto/presto-parser/0.215/presto-parser-0.215-sources.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/javax/inject/javax.inject/1/javax.inject-1-sources.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/io/airlift/slice/0.36/slice-0.36-sources.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/openjdk/jol/jol-core/0.2/jol-core-0.2-sources.jar!/" />
@@ -39,7 +39,7 @@
       <root url="jar://$MAVEN_REPOSITORY$/com/google/j2objc/j2objc-annotations/1.1/j2objc-annotations-1.1-sources.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/codehaus/mojo/animal-sniffer-annotations/1.14/animal-sniffer-annotations-1.14-sources.jar!/" />
       <root url="jar://$MAVEN_REPOSITORY$/org/antlr/antlr4-runtime/4.7.1/antlr4-runtime-4.7.1-sources.jar!/" />
-      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.174/log-0.174-sources.jar!/" />
+      <root url="jar://$MAVEN_REPOSITORY$/io/airlift/log/0.177/log-0.177-sources.jar!/" />
     </SOURCES>
   </library>
 </component>

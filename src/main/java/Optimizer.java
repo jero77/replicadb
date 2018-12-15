@@ -1,7 +1,14 @@
 import java.sql.*;
+import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Optional;
 
+import com.facebook.presto.sql.TreePrinter;
+import com.facebook.presto.sql.parser.ParsingOptions;
+import com.facebook.presto.sql.parser.SqlParser;
+import com.facebook.presto.sql.tree.*;
 import org.apache.ignite.*;
 
 public class Optimizer {
@@ -28,57 +35,24 @@ public class Optimizer {
         Connection conn = DriverManager.getConnection("jdbc:ignite:thin://127.0.0.1:10800");
 
 
-//        // Metadata & initial fragments
-//        DBMetadata meta = new DBMetadata(conn.getMetaData());
-//        meta.addTableFragment("TA", "AGE", 0, 20);
-//        meta.addTableFragment("TA", "AGE", 21, 40);
-//        meta.addTableFragment("TA", "AGE", 41, 60);
-//        meta.addTableFragment("TA", "AGE", 61, 80);
-//        meta.addTableFragment("TA", "AGE", 81, 100);
-//
-//
-//        // Query ...
-//        String query = "SELECT * FROM TA, TB WHERE TA.AGE <= 35 AND TA.ID = TB.IDOFTA";
-//
-//        // ... parsing ...
-//
-//        List<TableFragment> list = meta.findMatchingFragment("TA", "AGE", "<=",35);
-//        System.out.println("Fragments for selection condition TA.AGE <= 35");
-//        if (list == null)
-//            throw new IllegalArgumentException("No matching fragments found for table TA on selection TA.AGE <= 35");
-//        else if (list.size() == 1) {
-//            // only 1 fragment found --> it contains all the tuples we want
-//            System.out.println(list.get(0).getTableName() + ".F" + list.get(0).getFragmentNumber() + " age "
-//                    + list.get(0).getMinvalue() + "-" + list.get(0).getMaxvalue());
-//            // ... query server hosting this fragment ...
-//
-//        } else if (list.size() > 1) {
-//            // multiple fragments found
-//            for (TableFragment frag : list)
-//                System.out.println(frag.getTableName() + ".F" + frag.getFragmentNumber() + " age "
-//                        + frag.getMinvalue() + "-" + frag.getMaxvalue());
-//
-//            // ... query all servers hosting those fragments ...
-//            // ... collect tuples on one server ...
-//        }
-//
-//
-//        // Query ...
-//        query = "SELECT * FROM TA, TB WHERE TA.AGE >= 21 AND TA.AGE < 45";
-//
-//        // ... parsing ...
-//        list = meta.findMatchingFragment("TA", "AGE", 21, 45);
-//        System.out.println("Fragments for selection condition TA.AGE >= 21 && TA.AGE <= 45");
-//        for (TableFragment frag : list)
-//            System.out.println(frag.getTableName() + ".F" + frag.getFragmentNumber() + " age "
-//                    + frag.getMinvalue() + "-" + frag.getMaxvalue());
-//
+        // Create tables
+        Statement stmt = conn.createStatement();
+        stmt.executeUpdate("DROP TABLE IF EXISTS TA; DROP TABLE IF EXISTS TB");
+        stmt.executeUpdate("CREATE TABLE TA ( ID INT PRIMARY KEY, NAME VARCHAR, AGE INT)");
+        stmt.executeUpdate("CREATE TABLE TB ( ID INT PRIMARY KEY, IDOFTA INT)");
+
+        // Metadata table
+        stmt.executeUpdate("DROP TABLE IF EXISTS FRAGMETA; DROP TABLE IF EXISTS COMETA;");
+        stmt.executeUpdate("CREATE TABLE FRAGMETA (ID INT PRIMARY KEY, TABLE VARCHAR, ATTRIBUTE VARCHAR, " +
+                "MINVALUE INT, MAXVALUE INT) WITH \"template=replicated,backups=0\"");
+
+        stmt.executeUpdate("CREATE TABLE COMETA (ID INT PRIMARY KEY, TABLE VARCHAR, JOINATTR VARCHAR, " +
+                "COTABLE VARCHAR, COJOIN VARCHAR) WITH \"template=replicated,backups=0\"");
 
 
         // Store some meta-info
-        PreparedStatement prep = conn.prepareStatement("INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, " +
-                "MAXVALUE) VALUES (?, ?, ?, ?, ?)");
-
+        String insert = "INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, " + "MAXVALUE) VALUES (?, ?, ?, ?, ?)";
+        PreparedStatement prep = conn.prepareStatement(insert);
         for (int i = 0; i < 5; i++) {
             // 5 fragments for TA on TA.AGE: 1-20, 21-40, etc.
             prep.setInt(1, i);
@@ -89,9 +63,9 @@ public class Optimizer {
             prep.executeUpdate();
         }
 
-
         // Some co-partitioned meta data
-        prep = conn.prepareStatement("INSERT INTO COMETA (ID, TABLE, JOINATTR, COTABLE, COJOIN) VALUES (?,?,?,?,?)");
+        insert = "INSERT INTO COMETA (ID, TABLE, JOINATTR, COTABLE, COJOIN) VALUES (?,?,?,?,?)";
+        prep = conn.prepareStatement(insert);
         prep.setInt(1, 0);
         prep.setString(2, "TB");
         prep.setString(3, "IDOFTA");
@@ -101,12 +75,34 @@ public class Optimizer {
 
 
 
-        // Query ...
-        String query = "SELECT * FROM TA, TB WHERE TA.AGE <= 35 AND TA.ID = TB.IDOFTA";
 
-        // ... parsing ...
+
+        // Query ...
+        String sql = "SELECT * FROM TA, TB WHERE TA.AGE <= 35 AND TA.ID = TB.IDOFTA";
+
+        // parsing with presto-parser
+        SqlParser parser = new SqlParser();
+        Query query = (Query) parser.createStatement(sql, new ParsingOptions());
+        QuerySpecification body = (QuerySpecification) query.getQueryBody();
+        Optional<Expression> optional = body.getWhere();
+        Expression e = optional.orElse(null);
+        System.out.println("Where-Expression: " + e);
+
+        // print AST tree
+        IdentityHashMap<Expression, QualifiedName> ihm = new IdentityHashMap<Expression, QualifiedName>();
+        ihm.put(e, QualifiedName.of(e.toString()));
+        TreePrinter tp = new TreePrinter(ihm, System.out);
+        tp.print(e);
+
+        // Analyze the where clause
+        SelectionConditionAnalyzer sca = new SelectionConditionAnalyzer();
+        sca.analyzePrint(e);
+        ArrayList<ComparisonExpression> comparisons = sca.getComparisons();
+
+        // TODO match comparisons from WHERE clause with metadata -> identify possible primary frags & derived frags
+
         // --> attribute AGE, where a fragmentation exists, is a selection condition of the query
-        Statement stmt = conn.createStatement();
+        stmt = conn.createStatement();
         String queryFrag = "SELECT ID,MINVALUE,MAXVALUE FROM FRAGMETA WHERE TABLE='TA' AND ATTRIBUTE='AGE'";
         ResultSet res = stmt.executeQuery(queryFrag);
         while (res.next()) {
@@ -121,11 +117,6 @@ public class Optimizer {
                     + res.getString(2) + ", COJOIN=" + res.getString(3));
         }
 
-
-        // Query/Join can be processed!
-        // stmt.executeQuery(query);
-
-        // In case of no copartitioning of TB to TA
 
 
     }
