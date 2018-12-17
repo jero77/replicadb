@@ -80,28 +80,16 @@ public class Optimizer {
         // Query ...
         String sql = "SELECT * FROM TA, TB WHERE TA.AGE <= 35 AND TA.ID = TB.IDOFTA";
 
-        // parsing with presto-parser
-        SqlParser parser = new SqlParser();
-        Query query = (Query) parser.createStatement(sql, new ParsingOptions());
-        QuerySpecification body = (QuerySpecification) query.getQueryBody();
-        Optional<Expression> optional = body.getWhere();
-        Expression e = optional.orElse(null);
-        System.out.println("Where-Expression: " + e);
-
-        // print AST tree
-        IdentityHashMap<Expression, QualifiedName> ihm = new IdentityHashMap<Expression, QualifiedName>();
-        ihm.put(e, QualifiedName.of(e.toString()));
-        TreePrinter tp = new TreePrinter(ihm, System.out);
-        tp.print(e);
-
         // Analyze the where clause
-        SelectionConditionAnalyzer sca = new SelectionConditionAnalyzer();
-        sca.analyzePrint(e);
-        ArrayList<ComparisonExpression> comparisons = sca.getComparisons();
+        SelectionConditionAnalyzer sca = new SelectionConditionAnalyzer(conn);
+        sca.analyzePrint(sql);
 
         // TODO match comparisons from WHERE clause with metadata -> identify possible primary frags & derived frags
+        ArrayList<ComparisonExpression> fragCandidates = sca.getFragCandidates();
+
 
         // --> attribute AGE, where a fragmentation exists, is a selection condition of the query
+        System.out.println("\n\n\n");
         stmt = conn.createStatement();
         String queryFrag = "SELECT ID,MINVALUE,MAXVALUE FROM FRAGMETA WHERE TABLE='TA' AND ATTRIBUTE='AGE'";
         ResultSet res = stmt.executeQuery(queryFrag);
