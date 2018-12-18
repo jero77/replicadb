@@ -7,11 +7,13 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.MultimapBuilder;
 import javafx.util.Pair;
 
+import java.awt.*;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.*;
+import java.util.List;
 
 import static com.facebook.presto.sql.tree.ComparisonExpression.*;
 
@@ -138,6 +140,8 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
 
         // update class variables
         comparisons.clear();
+        fragCandidates.clear();
+        joins.clear();
         lastAnalyzed = e;
 
         // traversal of the expression
@@ -148,7 +152,8 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
 //        TreePrinter tp = new TreePrinter(ihm, System.out);
 //        tp.print(e);
 
-        // Analyze the Comparisons
+        // Analyze the Comparisons & save information to process the joins in WHERE clause or selections on fragmented
+        // attributes to optimize the query
         System.out.println("Found the following comparisons in the expression: " + e);
         for (ComparisonExpression comp : comparisons) {
             System.out.print(comp + " ... ");
@@ -157,15 +162,24 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
 
         if (! fragCandidates.isEmpty()) {
             ListMultimap<String, Integer> frags = testFragCandidates();
-            System.out.println(frags.size() + " possible fragment candidates found: ");
+            System.out.println(frags.size() + " possible fragments found: ");
 
             for (String key : frags.keySet()) {
-                System.out.println("Key: " + key + ", FragmentIDs: " + Arrays.toString(frags.get(key).toArray()));
+                System.out.println("\t -> on " + key + "fragment IDs=" + Arrays.toString(frags.get(key).toArray()));
             }
         } else {
-            System.out.println("Found no fragmentation candidates ... ");
+            System.out.println("Found no fragments at all ... ");
         }
 
+        if (! joins.isEmpty()) {
+            System.out.println("Found " + joins.size() + " joins. Testing joins for co-partitions ...");
+            HashMap<Join, Integer> copartitions = testJoinsForCopartitions();
+            for (Join j : copartitions.keySet()) {
+                System.out.println("\t -> Join: " + j + ", copartitionID: " + copartitions.get(j));
+            }
+        } else {
+            System.out.println("No joins found in WHERE clause ...");
+        }
         return true;
     }
 
@@ -219,67 +233,52 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
     }
 
 
-
+    /**
+     * This method tests the fragment candidates identified for the analyzed query to obtain the relevant fragment ids.
+     * @return All fragments that need to be accessed when executing the query
+     */
     private ListMultimap<String, Integer> testFragCandidates() {
 
         // Match information about fragmentations (FRAGMENTA) with the query attribute-value-comparisons
-        // Multimap assigns attribute-value comparison to fragments
-        ListMultimap<String, Integer> frags = MultimapBuilder.treeKeys().arrayListValues().build();
+        // This multimap stores for each attribute name all attribute-value-comparison
+        ListMultimap<String, ComparisonExpression> attrComps = MultimapBuilder.treeKeys().arrayListValues().build();
+
+        // This multimap stores for each attribute all fragment ids that match the comparisons
+        ListMultimap<String, Integer> result = MultimapBuilder.treeKeys().arrayListValues().build();
+
+        // Store all comparisons into the multimap with their attribute reference (table.name) as key
         for (ComparisonExpression comp : fragCandidates) {
-
-            // Get the table name and the attribute (form: table.attribute or attribute)
             DereferenceExpression left = (DereferenceExpression) comp.getLeft();
-            List<String> parts = DereferenceExpression.getQualifiedName(left).getParts();
-            String table, attr;
-            if (parts.size() == 2) {
-                table = parts.get(0);
-                attr = parts.get(1);
-            } else if (parts.size() == 1) {
-                table = "";     // TODO get table accordingly
-                attr = parts.get(0);
-            } else
-                throw new IllegalArgumentException("Cannot process DereferenceExpression: " + left + "\n Reason: " +
-                        "QualifiedName of the expression is not of the form <table>.<attribute> or <attribute>");
+            attrComps.put(DereferenceExpression.getQualifiedName(left).toString().toUpperCase(), comp);
+        }
+
+        // For every attribute test if it is compared once or several times
+        for (String attribute : attrComps.keySet()) {
+
+            List<ComparisonExpression> list = attrComps.get(attribute);
+            if (list.size() == 1) {     // only once compared
+
+                // Get all the fragments matching this comparison
+                result.putAll(attribute, getFragsOfComparison(list.get(0)));
+
+            } else if (list.size() == 2) {      // twice compared, e.g. T.a >= 15 AND T.a <= 20
+
+                // get the comparisons
+                ComparisonExpression a, b;
+                a = list.get(0);
+                b = list.get(1);
+                result.putAll(attribute, getFragsOfComparisons(a, b));
 
 
-            // Get the operator and the comparison value
-            Operator op = comp.getOperator();
-            Expression right = comp.getRight();
-            long compvalue = 0;
-            if (right instanceof LongLiteral) {
-                LongLiteral longLit = (LongLiteral) right;
-                compvalue = longLit.getValue();
-            }
-
-
-            // Query the fragmentation meta data table with the table and attribute name
-            String sql = "SELECT ID,MINVALUE,MAXVALUE FROM FRAGMETA WHERE TABLE=? AND ATTRIBUTE=?";
-            PreparedStatement prep;
-            try {
-                prep = conn.prepareStatement(sql);
-                prep.setString(1, table);
-                prep.setString(2, attr);
-                ResultSet res = prep.executeQuery();
-                while (res.next()) {
-
-                    // if the frag
-                    // TODO duplicate comparisons, e.g. T.A > 5 and T.A <= 10
-
-                    // If the comparison and a fragment match, store the fragment id
-                    if (matchCompAndFragMeta(op, compvalue, res.getLong(2), res.getLong(3))) {
-                        frags.put(table + "." + attr, res.getInt(1));
-                    }
-                }
-            } catch (SQLException e) {
-                System.err.println("ERROR for PreparedStatement to query FRAGMETA in " + this.getClass().getName());
-                e.printStackTrace();
-            }
-
+            } else throw new IllegalArgumentException("Cannot process the comparisons for the attribute " + attribute
+                    + " because there are too many comparisons on this attribute. Either the conditions are redundant"
+                    + " or the query might fail anyways due to contradictory selection conditions!");
 
         }
 
+
         // return the found assignment for the comparisons
-        return frags;
+        return result;
 
     }
 
@@ -313,9 +312,140 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
     }
 
 
+    /**
+     * This method gets the fragments matching the selection condition in form of two comparisons on the same attribute
+     * @param a ComparisonExpression of the form T.x op value
+     * @param b ComparisonExpression of the form T.x op2 value2
+     * @return Returns a list which contains the fragment ids
+     */
+    private ArrayList<Integer> getFragsOfComparisons(ComparisonExpression a, ComparisonExpression b) {
 
-    private void testJoinsForCopartitions() {
-        // TODO
+        ArrayList<Integer> result = new ArrayList<Integer>();
+
+        // The resulting list of fragments is the intersection of the two fragment lists of both comparisons alone
+        ArrayList<Integer> afrags = getFragsOfComparison(a);
+        ArrayList<Integer> bfrags = getFragsOfComparison(b);
+        for (Integer aid : afrags) {
+            if (bfrags.contains(aid))
+                result.add(aid);
+        }
+
+        return result;
+    }
+
+
+    /**
+     * This method returns all fragments matching the given comparison
+     * @param comp The comparison
+     * @return
+     */
+    private ArrayList<Integer> getFragsOfComparison(ComparisonExpression comp) {
+
+        ArrayList<Integer> result = new ArrayList<Integer>();
+
+        // Get the tablename and attributename
+        String tablename, attrname;
+        String attributeref =
+                DereferenceExpression.getQualifiedName((DereferenceExpression) comp.getLeft()).toString().toUpperCase();
+        tablename = attributeref.split("\\.")[0];      // attributeref = <table>.<attribute> (hopefully)
+        attrname = attributeref.split("\\.")[1];
+
+        // get operator and value
+        Operator op = comp.getOperator();
+        Expression right = comp.getRight();
+        long compvalue = 0;
+        if (right instanceof LongLiteral) {
+            LongLiteral longLit = (LongLiteral) right;
+            compvalue = longLit.getValue();
+        } else throw new IllegalArgumentException("The value of the comparison is not a long but a "
+                + right.getClass().getName());
+
+
+        // Query the fragmentation meta data table with the table and attribute name
+        String sql = "SELECT ID,MINVALUE,MAXVALUE FROM FRAGMETA WHERE TABLE=? AND ATTRIBUTE=?";
+        PreparedStatement prep;
+        try {
+            prep = conn.prepareStatement(sql);
+            prep.setString(1, tablename);
+            prep.setString(2, attrname);
+            ResultSet res = prep.executeQuery();
+
+            // If a fragment range matches, then put it into the result
+            while (res.next()) {
+                int fragmentID = res.getInt(1);
+                if (matchCompAndFragMeta(op, compvalue, res.getInt(2), res.getInt(3))) {
+                    result.add(fragmentID);
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("ERROR for PreparedStatement to query FRAGMETA in " + this.getClass().getName());
+            e.printStackTrace();
+        }
+
+        return result;
+    }
+
+
+
+    private HashMap<Join, Integer> testJoinsForCopartitions() {
+
+        // Test the joins from the WHERE clause, e.g. WHERE ... AND T.a = S.b AND ..., whether the joined tables are
+        // co-partitioned on that attribute(s); if a co-partitioning is found, then the join is added with the id of the
+        // metadata tuple to the result HashMap
+
+        HashMap<Join, Integer> result = new HashMap<Join, Integer>();
+
+
+        for (Join join : joins) {
+
+            // Get the tablenames and attribute names
+            JoinUsing criteria = (JoinUsing) join.getCriteria().get();
+            List<Identifier> columns = criteria.getColumns();
+            String table, cotable, joinattr, cojoin;
+            table = columns.get(0).getValue().split("\\.")[0];
+            joinattr = columns.get(0).getValue().split("\\.")[1];
+            cotable = columns.get(1).getValue().split("\\.")[0];
+            cojoin = columns.get(1).getValue().split("\\.")[1];
+
+            // Query the co-partitioning meta data table with the table and attribute names
+            String sql = "SELECT ID FROM COMETA WHERE TABLE=? AND JOINATTR = ? AND COTABLE=? AND COJOIN=?";
+            PreparedStatement prep;
+            try {
+                prep = conn.prepareStatement(sql);
+                prep.setString(1, table);
+                prep.setString(2, joinattr);
+                prep.setString(3, cotable);
+                prep.setString(4, cojoin);
+                ResultSet res = prep.executeQuery();
+
+                // If a co-partitioning is found, then store join & the co-partitioning id
+                if (res.next()) {
+                    int copartID = res.getInt(1);
+                    result.put(join, copartID);
+                    continue;
+                }
+
+                // Otherwise, check the other direction (join is bidirectional); and if nothing is found here, there is
+                // no co-partitioning and so store the join together with a null value to the result
+                prep.setString(1, cotable);
+                prep.setString(2, cojoin);
+                prep.setString(3, table);
+                prep.setString(4, joinattr);
+                res = prep.executeQuery();
+                if (res.next()) {
+                    int copartID = res.getInt(1);
+                    result.put(join, copartID);
+                } else {
+                    result.put(join, null);
+                }
+
+            } catch (SQLException e) {
+                System.err.println("ERROR for PreparedStatement to query FRAGMETA in " + this.getClass().getName());
+                e.printStackTrace();
+            }
+        }
+
+        return result;
     }
 
 

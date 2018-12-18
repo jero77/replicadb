@@ -75,40 +75,17 @@ public class Optimizer {
 
 
 
-
-
+        // TODO match comparisons from WHERE clause with metadata -> identify possible primary frags & derived frags
         // Query ...
-        String sql = "SELECT * FROM TA, TB WHERE TA.AGE <= 35 AND TA.ID = TB.IDOFTA";
+        String sql = "SELECT * FROM TA, TB WHERE 40 >= TA.AGE AND TA.AGE > 15 AND TA.ID = TB.IDOFTA";
 
         // Analyze the where clause
         SelectionConditionAnalyzer sca = new SelectionConditionAnalyzer(conn);
         sca.analyzePrint(sql);
 
-        // TODO match comparisons from WHERE clause with metadata -> identify possible primary frags & derived frags
-        ArrayList<ComparisonExpression> fragCandidates = sca.getFragCandidates();
-
-
-        // --> attribute AGE, where a fragmentation exists, is a selection condition of the query
-        System.out.println("\n\n\n");
-        stmt = conn.createStatement();
-        String queryFrag = "SELECT ID,MINVALUE,MAXVALUE FROM FRAGMETA WHERE TABLE='TA' AND ATTRIBUTE='AGE'";
-        ResultSet res = stmt.executeQuery(queryFrag);
-        while (res.next()) {
-            System.out.println("Fragment (AGE) found: ID=" + res.getInt(1) + ", MIN="
-                    + res.getInt(2) + ", MAX=" + res.getInt(3));
-        }
-
-        String queryCo = "SELECT ID, JOINATTR, COJOIN FROM COMETA WHERE TABLE='TB' AND COTABLE='TA'";
-        res = stmt.executeQuery(queryCo);
-        while (res.next()) {
-            System.out.println("Copartition for TB to TA found: ID=" + res.getInt(1) + ", JOIN="
-                    + res.getString(2) + ", COJOIN=" + res.getString(3));
-        }
-
 
 
     }
-
 
 
 }
