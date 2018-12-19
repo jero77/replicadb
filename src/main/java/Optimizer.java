@@ -10,6 +10,7 @@ import com.facebook.presto.sql.parser.ParsingOptions;
 import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.tree.*;
 import org.apache.ignite.*;
+import org.apache.ignite.internal.util.nodestart.IgniteNodeStartUtils;
 
 public class Optimizer {
 
@@ -27,6 +28,7 @@ public class Optimizer {
                    else find matching tuples/fragments of TB and copy them to server hosting fragment of TA
                 -> If there is no fragmentation of TA on attr. x, ?
          */
+
 
         // Register driver
         Class.forName("org.apache.ignite.IgniteJdbcThinDriver");
@@ -79,11 +81,19 @@ public class Optimizer {
         // Query ...
         String sql = "SELECT * FROM TA, TB WHERE 40 >= TA.AGE AND TA.AGE > 15 AND TA.ID = TB.IDOFTA";
 
-        // Analyze the where clause
-        SelectionConditionAnalyzer sca = new SelectionConditionAnalyzer(conn);
-        sca.analyzePrint(sql);
+        // Analyze the query
+        System.out.println(" --------------- Analyzation --------------- ");
+        QueryAnalyzer analyzer = new QueryAnalyzer(conn);
+        analyzer.analyzePrint(sql);
+        System.out.println("\n");
 
 
+        // Query without joins in selection condition, but with syntactical sugar
+        sql = "SELECT * FROM TA JOIN TB ON TA.ID = TB.IDOFTA";
+
+        // Analyze the query
+        System.out.println(" --------------- Analyzation --------------- ");
+        analyzer.analyzePrint(sql);
 
     }
 

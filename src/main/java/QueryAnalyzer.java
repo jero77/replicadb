@@ -20,9 +20,9 @@ import static com.facebook.presto.sql.tree.ComparisonExpression.*;
 /**
  * This class provides the analyzation for the selection condition of a query. It extends the class
  * {@link DefaultExpressionTraversalVisitor} to traverse the given SQL-Query containing a WHERE clause with the
- * provided method {@link SelectionConditionAnalyzer#analyzePrint(String)}
+ * provided method {@link QueryAnalyzer#analyzePrint(String)}
  */
-public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void> {
+public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void> {
 
     /**
      * Stores comparison expressions
@@ -40,9 +40,9 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
     private ArrayList<ComparisonExpression> fragCandidates;
 
     /**
-     * Saves the last analyzed expression
+     * Saves the last analyzed SQL query
      */
-    private Expression lastAnalyzed;
+    private String lastAnalyzedSql;
 
 
     /**
@@ -56,12 +56,12 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
      * Init
      * @param conn Connection to the database
      */
-    public SelectionConditionAnalyzer(Connection conn) {
+    public QueryAnalyzer(Connection conn) {
         super();
         comparisons = new ArrayList<ComparisonExpression>();
         joins = new ArrayList<Join>();
         fragCandidates = new ArrayList<ComparisonExpression>();
-        lastAnalyzed = null;
+        lastAnalyzedSql = null;
 
         this.conn = conn;
     }
@@ -101,8 +101,8 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
         return comparisons;
     }
 
-    public Expression getLastAnalyzed() {
-        return lastAnalyzed;
+    public String getLastAnalyzedSql() {
+        return lastAnalyzedSql;
     }
 
     public ArrayList<Join> getJoins() {
@@ -117,49 +117,36 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
     //########################### Analyzing Methods ###################################
 
     /**
-     * Analyze a given SQL-Query containing a conjunctive WHERE clause without subqueries and print the results
+     * Analyze a given SQL query and print the results
      *
-     * @param sqlWithWhere SQL-Query with WHERE
-     * @return True, if a WHERE clause was found and analyzed; false otherwise
+     * @param sql SQL query
+     * @return True, if the query could be analyzed; false otherwise
      */
-    public boolean analyzePrint(String sqlWithWhere) {
+    public boolean analyzePrint(String sql) {
 
         Expression e;
-
-        // parsing with presto-parser
-        SqlParser parser = new SqlParser();
-        Query query = (Query) parser.createStatement(sqlWithWhere, new ParsingOptions());
-        Optional<Expression> optional = ((QuerySpecification) query.getQueryBody()).getWhere();
-        if (optional.isPresent())
-            e = optional.get();
-        else {
-            System.out.println("No WHERE clause contained");
-            return false;
-        }
-        System.out.println("Where-Expression: " + e);
 
         // update class variables
         comparisons.clear();
         fragCandidates.clear();
         joins.clear();
-        lastAnalyzed = e;
+        lastAnalyzedSql = sql;
 
-        // traversal of the expression
-        process(e);
-        // print AST tree
-//        IdentityHashMap<Expression, QualifiedName> ihm = new IdentityHashMap<Expression, QualifiedName>();
-//        ihm.put(e, QualifiedName.of(e.toString()));
-//        TreePrinter tp = new TreePrinter(ihm, System.out);
-//        tp.print(e);
+        // parsing the expression with presto-parser to obtain the query body
+        SqlParser parser = new SqlParser();
+        Query query = (Query) parser.createStatement(sql, new ParsingOptions());
+        QueryBody queryBody = query.getQueryBody();
 
-        // Analyze the Comparisons & save information to process the joins in WHERE clause or selections on fragmented
-        // attributes to optimize the query
-        System.out.println("Found the following comparisons in the expression: " + e);
-        for (ComparisonExpression comp : comparisons) {
-            System.out.print(comp + " ... ");
-            processComparisonExpression(comp);
+
+        // Analyze WHERE expression (if present)
+        if (analyzeWhereExpression(queryBody)) {
+
+        } else {
+            System.out.println("WHERE expression could not be analyzed! An error occured!");
         }
 
+
+        // process possible fragment candidates
         if (! fragCandidates.isEmpty()) {
             ListMultimap<String, Integer> frags = testFragCandidates();
             System.out.println(frags.size() + " possible fragments found: ");
@@ -168,8 +155,16 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
                 System.out.println("\t -> on " + key + "fragment IDs=" + Arrays.toString(frags.get(key).toArray()));
             }
         } else {
-            System.out.println("Found no fragments at all ... ");
+            System.out.println("Found no fragments for the given query (based on the selection conditions) ... ");
+            // TODO collect all fragments for the table(s) ?!?!
+            // TODO make a new fragmentation of the table(s) and adjust the databases accordingly ?!?!
         }
+
+
+
+
+
+
 
         if (! joins.isEmpty()) {
             System.out.println("Found " + joins.size() + " joins. Testing joins for co-partitions ...");
@@ -178,10 +173,67 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
                 System.out.println("\t -> Join: " + j + ", copartitionID: " + copartitions.get(j));
             }
         } else {
-            System.out.println("No joins found in WHERE clause ...");
+            System.out.println("Found no joins in WHERE clause ...");
+
+            // TODO find joins in JOIN? Maybe cartesian product (CROSS Join)?
+
+            // get join (if present) from the querybody
+            Optional<Relation> optFrom = ((QuerySpecification) query.getQueryBody()).getFrom();
+            if (optFrom.isPresent()) {
+
+                Relation relation = optFrom.get();
+                System.out.println("Found relation: " + relation);
+
+            } else {
+                System.err.println("No FROM clause specified in query " + query.toString());
+                return false;
+            }
         }
         return true;
     }
+
+
+    /**
+     * Process the where expression from the given {@link QuerySpecification}
+     * @param queryBody The body of a query
+     * @return True if the WHERE expression in the body of the query could be analyzed; false otherwise
+     */
+    private boolean analyzeWhereExpression(QueryBody queryBody) {
+
+        Expression e;
+
+        Optional<Expression> optWhere = ((QuerySpecification) queryBody).getWhere();
+        if (optWhere.isPresent()) {
+            e = optWhere.get();
+        }
+        else {
+            System.out.println("Found no WHERE clause in the query!");
+            return false;
+        }
+
+        e = optWhere.get();
+        System.out.println("Where-Expression: " + e);
+
+        // Tree debug
+        //printAstTree(e);
+
+        // traversal of the expression with the process method of the AstVisitor to classify subexpressions
+        // this fills the comparisons (for fragment candidates) and the joins (for co-partitioning)
+        super.process(e);
+
+
+        // Analyze the found comparisons & save information to process the joins in WHERE clause for co-partitioning
+        // or to process selection conditions on (possibly) fragmented attributes to optimize the query
+        System.out.println("Found the following comparisons in the WHERE expression: " + e);
+        for (ComparisonExpression comp : comparisons) {
+            System.out.print(comp + ", processing comparison ... ");
+            processComparisonExpression(comp);
+        }
+
+        return true;
+    }
+
+
 
 
     /**
@@ -446,6 +498,18 @@ public class SelectionConditionAnalyzer extends DefaultExpressionTraversalVisito
         }
 
         return result;
+    }
+
+
+    /**
+     * Prints the AST-Tree to the given expression to {@link System#out}
+     * @param e
+     */
+    private void printAstTree(Expression e) {
+        IdentityHashMap<Expression, QualifiedName> ihm = new IdentityHashMap<Expression, QualifiedName>();
+        ihm.put(e, QualifiedName.of(e.toString()));
+        TreePrinter tp = new TreePrinter(ihm, System.out);
+        tp.print(e);
     }
 
 

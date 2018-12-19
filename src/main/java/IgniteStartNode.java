@@ -7,7 +7,7 @@ import java.util.Arrays;
 
 public class IgniteStartNode {
 
-    public static void main(String[] args) {
+    public static void start() {
 
         // Discovery
         TcpDiscoverySpi spi = new TcpDiscoverySpi();
@@ -22,6 +22,10 @@ public class IgniteStartNode {
 
         // Start the node
         Ignition.start(cfg);
+    }
+
+    public static void main(String[] args) {
+        start();
     }
 }
 
