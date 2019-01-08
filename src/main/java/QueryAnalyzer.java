@@ -18,7 +18,7 @@ import java.util.List;
 import static com.facebook.presto.sql.tree.ComparisonExpression.*;
 
 /**
- * This class provides the analyzation for the selection condition of a query. It extends the class
+ * This class provides the analysis for the selection condition of a query. It extends the class
  * {@link DefaultExpressionTraversalVisitor} to traverse the given SQL-Query containing a WHERE clause with the
  * provided method {@link QueryAnalyzer#analyzePrint(String)}
  */
@@ -70,7 +70,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 //########################### Overwritten Methods ###################################
 
     /**
-     * When visiting a {@link ComparisonExpression}, the expression is stored into the HashMap for analyzation
+     * When visiting a {@link ComparisonExpression}, the expression is stored into the HashMap for analysis
      *
      * @param node
      * @param context
@@ -142,8 +142,9 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         if (analyzeFromExpression(queryBody)) {
             System.out.println("FROM expression was successfully analyzed!");
         } else {
-            System.out.println("FROM expression could not be analyzed! An error occured!");
-            throw new IllegalArgumentException("The query " + query + " does not contain any FROM clause!");
+            // false means no join is present so only select from one table (no co-partitioning)
+            System.out.println("FROM expression was be analyzed but no join was found!");
+
         }
 
 
@@ -151,7 +152,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         if (analyzeWhereExpression(queryBody)) {
             System.out.println("WHERE expression was successfully analyzed!");
 
-            // process possible fragment candidates obtained from selection conditions from WHERE analyzation
+            // process possible fragment candidates obtained from selection conditions from WHERE analysis
             if (! fragCandidates.isEmpty()) {
                 System.out.println("Testing " + fragCandidates.size() + " fragment candidates ... ");       // DEBUG
                 ListMultimap<String, Integer> frags = testFragCandidates();
@@ -161,7 +162,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
                     // There are no fragments based on selection conditions
                     // TODO make fragmentations for candidates!
                     for (ComparisonExpression comp : fragCandidates) {
-                        //makeFragmentationForComparisonExpression(comp);
+                        makeFragmentationForComparisonExpression(comp);
                     }
                 }
                 else
@@ -170,6 +171,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
                         System.out.println("\t -> on " + key + " fragmentIDs="
                                 + Arrays.toString(frags.get(key).toArray()));       // DEBUG
                         // TODO process the fragments --> find server? rewrite query? redirect query to server?
+                        // TODO what if there are multiple selection conditions with multiple fragmentations?
                     }
 
             } else {
@@ -183,7 +185,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
 
 
-        // Process all joins found in the WHERE and FROM analyzation
+        // Process all joins found in the WHERE and FROM analysis
         if (! joins.isEmpty()) {
             System.out.println("Found " + joins.size() + " joins. Testing joins for co-partitions ...");
             HashMap<Join, Integer> copartitions = testJoinsForCopartitions();
@@ -198,6 +200,9 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         return true;
     }
+
+
+
 
 
     /**
@@ -298,7 +303,8 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
     /**
      * This method analyzes the FROM expression in the given query body whether it contains a join of tables or not. It
-     * will have a look at the JOIN of (two or more) tables (if present) and will store TODO
+     * will have a look at the JOIN of (two or more) tables (if present) and will store joins for later analysis in
+     * a list.
      * @param queryBody
      * @return True if the FROM expression was successfully analyzed; false if there is no join
      */
@@ -326,7 +332,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         System.out.println("Found a join: " + join);
 
         if (join.getType().equals(Join.Type.IMPLICIT)) {
-            // The join is implicit => cf. WHERE expression analyzation, return true because FROM analyzation is done
+            // The join is implicit => cf. WHERE expression analysis, return true because FROM analysis is done
             return true;
         } else {
 
@@ -353,7 +359,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
             // TODO what if criteria not present
         }
 
-        // TODO what is with 3+ tables being joined ?? Is the structure TA Join (TB Join TC) or how else?
+        // TODO what is with 3+ tables being joined in FROM? Is the structure TA Join (TB Join TC) or how else?
 
         return true;
     }
@@ -584,6 +590,79 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         }
 
         return result;
+    }
+
+
+    /**
+     * This method will create a new fragmentation for the given comparison expression (which is a selection condition
+     * in the currently analyzed query). The ComparisonExpression has to be of the form '<DereferenceExpression> <op>
+     * <Value>'. For the sake of simplicity, the newly created fragmentation will consist of two selection conditions:
+     * the one given as argument to this function and the negated version of it (other direction).
+     * After this, the method will rearrange the data to match the fragmentation and update the metadata.
+     * @param comp
+     */
+    private void makeFragmentationForComparisonExpression(ComparisonExpression comp) {
+
+        // Decompose ComparisonExpression
+        DereferenceExpression left = (DereferenceExpression) comp.getLeft();
+        Expression right = comp.getRight();
+        Operator op = comp.getOperator();
+
+        // Negate comp
+        ComparisonExpression negated = new ComparisonExpression(op.negate(), left, right);
+
+
+        // Update the metadata todo maybe transaction style?
+        int nextID = metaMakeNewFragment(left.getBase().toString(), "", 0,0);
+
+
+
+
+        // Rearrange the data according to the new fragmentation: insert data into new fragments from all 'old'
+        // fragments
+
+
+
+    }
+
+
+    /**
+     * Update the metadata and set a new fragment according to the arguments.
+     * @param table Name of the table
+     * @param attribute Name of the attribute
+     * @param minvalue Minimum value of the fragment (inclusively)
+     * @param maxvalue Maximum value of the fragment (inclusively)
+     */
+    private void metaMakeNewFragment(String table, String attribute, int minvalue, int maxvalue) {
+
+        // Find the next ID to be used to store a fragment of this table
+        int nextID = 0;
+        try {
+            PreparedStatement prep = conn.prepareStatement("SELECT MAX(ID) FROM FRAGMETA WHERE TABLE = ?");
+            prep.setString(1, table);
+            ResultSet res = prep.executeQuery();
+            if (res.next())
+                nextID = res.getInt(1) + 1;
+
+            System.out.println("Next ID is " + nextID); // DEBUG
+
+            // Store the fragment in the metadata table
+            prep = conn.prepareStatement("INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, MAXVALUE) VALUES " +
+                    "(?,?,?,?,?)");
+            prep.setInt(1, nextID);
+            prep.setString(2, table);
+            prep.setString(3, attribute);
+            prep.setInt(4, minvalue);
+            prep.setInt(5, maxvalue);
+            int rowsupdated = prep.executeUpdate();
+            if (rowsupdated != 1)
+                ;    //todo exception?
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+
+
     }
 
 

@@ -45,7 +45,7 @@ public class Optimizer {
 
         // Metadata table
         stmt.executeUpdate("DROP TABLE IF EXISTS FRAGMETA; DROP TABLE IF EXISTS COMETA;");
-        stmt.executeUpdate("CREATE TABLE FRAGMETA (ID INT PRIMARY KEY, TABLE VARCHAR, ATTRIBUTE VARCHAR, " +
+        stmt.executeUpdate("CREATE TABLE FRAGMETA (ID INT, TABLE VARCHAR, ATTRIBUTE VARCHAR, " +
                 "MINVALUE INT, MAXVALUE INT) WITH \"template=replicated,backups=0\"");
 
         stmt.executeUpdate("CREATE TABLE COMETA (ID INT PRIMARY KEY, TABLE VARCHAR, JOINATTR VARCHAR, " +
@@ -87,12 +87,13 @@ public class Optimizer {
         System.out.println("\n");
 
 
-        // Query without joins in selection condition, but with syntactical sugar
-        sql = "SELECT * FROM TA JOIN TB ON TA.ID = TB.IDOFTA";
+        // Query with 3 joined tables
+        sql = "SELECT * FROM TA, TB, TC WHERE TA.ID = TB.IDOFTA AND TA.ID = TC.IDOFTA";
 
         // Analyze the query
         System.out.println(" --------------- Analyzation --------------- ");
         analyzer.analyzePrint(sql);
+
 
     }
 
