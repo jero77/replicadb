@@ -141,13 +141,10 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         // Analyze FROM expression (should be present, otherwise throw an exception)
         if (analyzeFromExpression(queryBody)) {
             System.out.println("FROM expression was successfully analyzed!");
-
-
-
         } else {
             System.out.println("FROM expression could not be analyzed! An error occured!");
+            throw new IllegalArgumentException("The query " + query + " does not contain any FROM clause!");
         }
-
 
 
         // Analyze WHERE expression (if present)
@@ -156,26 +153,37 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
             // process possible fragment candidates obtained from selection conditions from WHERE analyzation
             if (! fragCandidates.isEmpty()) {
+                System.out.println("Testing " + fragCandidates.size() + " fragment candidates ... ");       // DEBUG
                 ListMultimap<String, Integer> frags = testFragCandidates();
-                System.out.println(frags.size() + " possible fragments found: ");
+                System.out.println(frags.size() + " fragments found: ");   // DEBUG
 
-                for (String key : frags.keySet()) {
-                    System.out.println("\t -> on " + key + "fragment IDs=" + Arrays.toString(frags.get(key).toArray()));
+                if (frags.isEmpty()) {
+                    // There are no fragments based on selection conditions
+                    // TODO make fragmentations for candidates!
+                    for (ComparisonExpression comp : fragCandidates) {
+                        //makeFragmentationForComparisonExpression(comp);
+                    }
                 }
+                else
+                    for (String key : frags.keySet()) {
+                        // Process the found fragments
+                        System.out.println("\t -> on " + key + " fragmentIDs="
+                                + Arrays.toString(frags.get(key).toArray()));       // DEBUG
+                        // TODO process the fragments --> find server? rewrite query? redirect query to server?
+                    }
+
             } else {
-                System.out.println("Found no fragments for the given query (based on the selection conditions) ... ");
-                // TODO collect all fragments for the table(s) ?!?!
-                // TODO make a new fragmentation of the table(s) and adjust the databases accordingly ?!?!
+                System.out.println("Found no fragment candidates for the given query (for selection conditions) ... ");
+                // TODO query all servers and collect tuples on one server? store tuples to "collection" server or just answer the query?
             }
 
         } else {
-            System.out.println("WHERE expression could not be analyzed! An error occured!");
+            System.out.println("WHERE expression could not be analyzed! An error occured or maybe there is no WHERE...");
         }
 
 
 
-
-        // Process all joins found in the WHERE analyzation TODO and FROM analyzation?
+        // Process all joins found in the WHERE and FROM analyzation
         if (! joins.isEmpty()) {
             System.out.println("Found " + joins.size() + " joins. Testing joins for co-partitions ...");
             HashMap<Join, Integer> copartitions = testJoinsForCopartitions();
@@ -183,21 +191,9 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
                 System.out.println("\t -> Join: " + j + ", copartitionID: " + copartitions.get(j));
             }
         } else {
-            System.out.println("Found no joins in WHERE clause ...");
+            System.out.println("Found no joins in WHERE and FROM clause ...");
+            // TODO So only selection from one table? Or something else?
 
-            // TODO find joins in JOIN? Maybe cartesian product (CROSS Join)?
-
-            // get join (if present) from the querybody
-            Optional<Relation> optFrom = ((QuerySpecification) query.getQueryBody()).getFrom();
-            if (optFrom.isPresent()) {
-
-                Relation relation = optFrom.get();
-                System.out.println("Found relation: " + relation);
-
-            } else {
-                System.err.println("No FROM clause specified in query " + query.toString());
-                return false;
-            }
         }
 
         return true;
@@ -262,19 +258,23 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         if (left instanceof DereferenceExpression && right instanceof DereferenceExpression) {
 
+            DereferenceExpression dref_left, dref_right;
+            dref_left = (DereferenceExpression) left;
+            dref_right = (DereferenceExpression) right;
+
             if (op.equals(Operator.EQUAL)) {         // IMPLICIT JOIN of left and right DereferenceExpressions
-                System.out.println("Found an IMPLICIT JOIN! (will be stored as INNER JOIN because an IMPLICIT JOIN" +
+                System.out.println("Found an IMPLICIT JOIN! (will be stored as INNER JOIN because an IMPLICIT JOIN " +
                         "cannot have JoinCriteria ...)");
 
                 // Get columns & create JoinCriteria (maybe not needed ...)
                 List<Identifier> columns = new ArrayList<Identifier>();
-                columns.add(new Identifier(left.toString()));
-                columns.add(new Identifier(right.toString()));
-                JoinCriteria joinCriteria = new JoinUsing(columns);  // TODO maybe omit or change Table constr. in joins.add(...)
+                columns.add(dref_left.getField());
+                columns.add(dref_right.getField());
+                JoinCriteria joinCriteria = new JoinUsing(columns);  // TODO maybe change column list creation
 
                 // Store join
-                joins.add(new Join(Join.Type.INNER, new Table(QualifiedName.of(left.toString())),
-                        new Table(QualifiedName.of(right.toString())), Optional.of(joinCriteria)));
+                joins.add(new Join(Join.Type.INNER, new Table(QualifiedName.of(dref_left.getBase().toString())),
+                        new Table(QualifiedName.of(dref_right.getBase().toString())), Optional.of(joinCriteria)));
             } else {
                 // Operator is of some other type: <, <=, >=, >, <>, ...
             }
@@ -327,21 +327,30 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         if (join.getType().equals(Join.Type.IMPLICIT)) {
             // The join is implicit => cf. WHERE expression analyzation, return true because FROM analyzation is done
-            System.out.println("It is an IMPLICIT JOIN");
             return true;
         } else {
 
             Optional<JoinCriteria> optCriteria = join.getCriteria();
             if (optCriteria.isPresent()) {
                 if (optCriteria.get() instanceof JoinOn) {
+                    // Disassemble expression e (--> ComparisonExpression with DerefExpr. = DerefExpr.) & process it
+                    // This transforms the JoinOn to a JoinUsing with column list
                     JoinOn joinOn = (JoinOn) optCriteria.get();
-                    // TODO transform to JoinUsing with column list ...
-                    System.out.println("JoinOn: " + joinOn + ", expr: " + joinOn.getExpression() + ", nodes: "
-                            + Arrays.toString(joinOn.getNodes().toArray()));
+                    Expression e = joinOn.getExpression();
+                    System.out.println("JoinOn: " + joinOn + ", expr: " + e);        // DEBUG
+
+                    if (! (e instanceof ComparisonExpression))
+                        throw new IllegalArgumentException("The expression " + e + " of the JoinOn " + joinOn + " " +
+                                "from the join " + join + " is not a ComparisonExpression, but an instance of class "
+                                + e.getClass().getName());
+
+                    processComparisonExpression((ComparisonExpression) e);
+                } else {
+                    joins.add(join);    // add it to the list of joins
                 }
             }
 
-            joins.add(join);
+            // TODO what if criteria not present
         }
 
         // TODO what is with 3+ tables being joined ?? Is the structure TA Join (TB Join TC) or how else?
@@ -448,6 +457,11 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
                 result.add(aid);
         }
 
+        // If the intersection of both is empty, the two comparisons are unsatisfiable together (e.g. x>5 && x<0)
+        if (result.isEmpty())
+            throw new IllegalArgumentException("The intersection of the two fragment lists of comparisons " + a
+                    + " and " + b + " is empty because the selection conditions are unsatisfiable which makes the" +
+                    " query unsatisfiable!");
         return result;
     }
 
@@ -513,17 +527,23 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         HashMap<Join, Integer> result = new HashMap<Join, Integer>();
 
-
         for (Join join : joins) {
 
-            // Get the tablenames and attribute names
-            JoinUsing criteria = (JoinUsing) join.getCriteria().get();      // TODO ClassCastExc: (JoinUsing) JoinOn -.-
-            List<Identifier> columns = criteria.getColumns();
+            // Get the tablenames and attribute names (join should have tables t1.a1 and t2.a2 if only join of 2 tables)
+            Table left, right;
+            left = (Table) join.getLeft();
+            right = (Table) join.getRight();
             String table, cotable, joinattr, cojoin;
-            table = columns.get(0).getValue().split("\\.")[0];
-            joinattr = columns.get(0).getValue().split("\\.")[1];
-            cotable = columns.get(1).getValue().split("\\.")[0];
-            cojoin = columns.get(1).getValue().split("\\.")[1];
+            // Table names
+            table = left.getName().toString().toUpperCase();
+            cotable = right.getName().toString().toUpperCase();
+            // Attribute names
+            JoinUsing criteria = (JoinUsing) join.getCriteria().get();
+            List<Identifier> joinColumns = criteria.getColumns();
+            joinattr = joinColumns.get(0).getValue();
+            cojoin = joinColumns.get(1).getValue();
+            // TODO maybe check size --> 3+ tables joined 3+ columns in list?!
+            // TODO maybe assign attribute names not according to position in arraylist but according to tablename?
 
             // Query the co-partitioning meta data table with the table and attribute names
             String sql = "SELECT ID FROM COMETA WHERE TABLE=? AND JOINATTR = ? AND COTABLE=? AND COJOIN=?";

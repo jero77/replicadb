@@ -68,7 +68,7 @@ public class Optimizer {
         // Some co-partitioned meta data
         insert = "INSERT INTO COMETA (ID, TABLE, JOINATTR, COTABLE, COJOIN) VALUES (?,?,?,?,?)";
         prep = conn.prepareStatement(insert);
-        prep.setInt(1, 0);
+        prep.setInt(1, 1732);
         prep.setString(2, "TB");
         prep.setString(3, "IDOFTA");
         prep.setString(4, "TA");
@@ -77,7 +77,6 @@ public class Optimizer {
 
 
 
-        // TODO match comparisons from WHERE clause with metadata -> identify possible primary frags & derived frags
         // Query ...
         String sql = "SELECT * FROM TA, TB WHERE 40 >= TA.AGE AND TA.AGE > 15 AND TA.ID = TB.IDOFTA";
 
