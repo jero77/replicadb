@@ -9,6 +9,7 @@ import javafx.util.Pair;
 
 import java.awt.*;
 import java.sql.*;
+import java.sql.Statement;
 import java.util.*;
 import java.util.List;
 
@@ -589,6 +590,49 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
     }
 
 
+    /**
+     * Generates the ordered list with all column names and their SQL-Types from a certain table in the following form:
+     *      List = ["Column1;TypeA", "Column2;TypeB", ...]
+     * @param table Table name
+     * @return Column List
+     */
+    private ArrayList<String> getColumnsFromTable(String table) {
+
+        ArrayList<String> columns = new ArrayList<String>();
+        try {
+            Statement stmt = conn.createStatement();
+            ResultSet res = stmt.executeQuery("SELECT * FROM " + table);     // Dummy query to get metadata
+            ResultSetMetaData meta = res.getMetaData();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                columns.add(meta.getColumnName(i) + ";" + meta.getColumnTypeName(i));
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return columns;
+    }
+
+
+    /**
+     * This method returns a list of all primary column names of a certain table
+     * @param table Table name
+     * @return Primary key columns
+     */
+    private ArrayList<String> getPrimaryKeysFromTable(String table) {
+        ArrayList<String> primaryKeys = new ArrayList<String>();
+        try {
+            ResultSet res = conn.getMetaData().getPrimaryKeys("", "", table);
+            while (res.next()) {
+                primaryKeys.add(res.getString("PK_NAME"));      // Should be "COLUMN_NAME"? maybe Ignite ...
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+        return primaryKeys;
+    }
+
+
+
 
 // ########################## Fragmentation Management ##############################################
 
@@ -606,26 +650,42 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         // Decompose ComparisonExpression
         DereferenceExpression left = (DereferenceExpression) comp.getLeft();
-        String table = left.getBase().toString();
-        String attribute = left.getField().getValue();
+        String table = left.getBase().toString().toUpperCase();
+        String attribute = left.getField().getValue().toUpperCase();
         Expression right = comp.getRight();
         int value = (int) ((LongLiteral) right).getValue();
         Operator op = comp.getOperator();
         Operator negop = op.negate();
 
-
-        // Update the metadata
+        // Update the metadata & create string for fragment table
         Integer[] minMax = setMinMaxValue(op, value);
-        metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
+        int fragID = metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
+        String create = buildFragmentCreateString(table, fragID);
 
-        // Set the second negated fragment
+        // Update metadata for the second negated fragment & create string
         minMax = setMinMaxValue(negop, value);
-        metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
+        fragID = metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
+        String negCreate = buildFragmentCreateString(table, fragID);
+
+        // Create the two fragment tables
+        try {
+            Statement stmt = conn.createStatement();
+            //stmt.execute(create);
+            //stmt.execute(negCreate);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
 
         // TODO rearrangement
         // Rearrange the data according to the new fragmentation: insert data into the new fragments from all 'old'
         // fragments matching the selection condition of the fragment
-
+        String insert = buildFragmentInsertString(table, fragID);
+        try {
+            PreparedStatement prep = conn.prepareStatement(insert);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
 
 
     }
@@ -639,8 +699,9 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
      * @param attribute Name of the attribute
      * @param minvalue Minimum value of the fragment (inclusively)
      * @param maxvalue Maximum value of the fragment (inclusively)
+     * @return The ID of the fragment (name is 'table_ID'), -1 on error
      */
-    private void metaMakeNewFragment(String table, String attribute, Integer minvalue, Integer maxvalue) {
+    private int metaMakeNewFragment(String table, String attribute, Integer minvalue, Integer maxvalue) {
 
         if (minvalue == null && maxvalue == null)
             throw new IllegalArgumentException("The both arguments minvalue and maxvalue must not be null at the same" +
@@ -675,12 +736,12 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
             // Execute update
             int rowsupdated = prep.executeUpdate();
             if (rowsupdated != 1)
-                ;    //todo exception?
+                nextID = -1;    //todo exception?
         } catch (SQLException e) {
             e.printStackTrace();
         }
 
-
+        return nextID;
 
     }
 
@@ -716,6 +777,70 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
     }
 
 
+
+    /**
+     * This method builds the CREATE TABLE SQL statement which will be used for creation of a fragment of a given table
+     * @param table Table name
+     * @param fragID ID of the fragment (used in name of the fragment table)
+     * @return SQL CREATE TABLE statement
+     */
+    private String buildFragmentCreateString(String table, int fragID) {
+
+        // Get the columns and primary keys
+        ArrayList<String> columns, primaryKeys;
+        columns = getColumnsFromTable(table);
+        primaryKeys = getPrimaryKeysFromTable(table);
+
+        // Add the column list to the build
+        StringBuilder create = new StringBuilder("CREATE TABLE " + table + "_" + fragID + " (");
+        for (String s : columns) {
+            create.append(s.replace(";", " ") + ", ");
+        }
+
+        // Add the primary key to the build
+        create.append("PRIMARY KEY (");
+        if (primaryKeys.size() < 1) {
+            // todo exception? or what?
+        }
+        create.append(primaryKeys.remove(0));
+        for (String s : primaryKeys) {
+            create.append(", " + s);
+        }
+        create.append(") )");
+
+        // return the build
+        return create.toString();
+    }
+
+
+    /**
+     * Builds an INSERT INTO SQL statement for a given table fragment
+     * @param table Table name
+     * @param fragID ID of the fragment (used in table name)
+     * @return SQL INSERT statement
+     */
+    private String buildFragmentInsertString(String table, int fragID) {
+
+        // Start to build
+        StringBuilder insert = new StringBuilder("INSERT INTO " + table + "_" + fragID + " (");
+
+        // Add column names of the table to the build
+        ArrayList<String> columns = getColumnsFromTable(table);
+        if (columns.size() < 1)
+            ;   // todo what to do? excpetion?
+        insert.append(columns.remove(0).split(";")[0]);
+        for (String s : columns) {
+            insert.append("," + s.split(";")[0]);       // only name needed; type irrelevant here
+        }
+        insert.append(") ");
+
+        // Add subquery with selection condition for fragment
+        insert.append("(SELECT * FROM " + table + " WHERE )");    // todo condition
+
+        // return build
+        System.out.println(insert.toString());      // DEBUG
+        return insert.toString();
+    }
 
 
 // ################################ DEBUG Stuff ###########################################

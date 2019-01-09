@@ -46,13 +46,13 @@ public class Optimizer {
         // Metadata table
         stmt.executeUpdate("DROP TABLE IF EXISTS FRAGMETA; DROP TABLE IF EXISTS COMETA;");
         stmt.executeUpdate("CREATE TABLE FRAGMETA (ID INT, TABLE VARCHAR, ATTRIBUTE VARCHAR, " +
-                "MINVALUE INT, MAXVALUE INT, PRIMARY KEY (ID, TABLE) ) WITH \"template=replicated,backups=0\"");
+                "MINVALUE INT, MAXVALUE INT, PRIMARY KEY (ID, TABLE) )");
 
         stmt.executeUpdate("CREATE TABLE COMETA (ID INT, TABLE VARCHAR, JOINATTR VARCHAR, " +
-                "COTABLE VARCHAR, COJOIN VARCHAR, PRIMARY KEY (ID) ) WITH \"template=replicated,backups=0\"");
+                "COTABLE VARCHAR, COJOIN VARCHAR, PRIMARY KEY (ID) )");
 
 
-        // Store some meta-info
+        // Store some meta-info (--> note: these fragment tables are not created as table_ID (yet))
         String insert = "INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, MAXVALUE) VALUES (?, ?, ?, ?, ?)";
         PreparedStatement prep = conn.prepareStatement(insert);
         for (int i = 0; i < 5; i++) {
