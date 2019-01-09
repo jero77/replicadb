@@ -8,10 +8,7 @@ import com.google.common.collect.MultimapBuilder;
 import javafx.util.Pair;
 
 import java.awt.*;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
+import java.sql.*;
 import java.util.*;
 import java.util.List;
 
@@ -114,7 +111,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
     }
 
 
-    //########################### Analyzing Methods ###################################
+//########################### Analysis Methods ###################################
 
     /**
      * Analyze a given SQL query and print the results
@@ -160,7 +157,6 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
                 if (frags.isEmpty()) {
                     // There are no fragments based on selection conditions
-                    // TODO make fragmentations for candidates!
                     for (ComparisonExpression comp : fragCandidates) {
                         makeFragmentationForComparisonExpression(comp);
                     }
@@ -200,9 +196,6 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
         return true;
     }
-
-
-
 
 
     /**
@@ -364,6 +357,9 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         return true;
     }
 
+
+
+// ########################### Metadata information ################################
 
 
     /**
@@ -593,33 +589,42 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
     }
 
 
+
+// ########################## Fragmentation Management ##############################################
+
+
     /**
      * This method will create a new fragmentation for the given comparison expression (which is a selection condition
      * in the currently analyzed query). The ComparisonExpression has to be of the form '<DereferenceExpression> <op>
      * <Value>'. For the sake of simplicity, the newly created fragmentation will consist of two selection conditions:
      * the one given as argument to this function and the negated version of it (other direction).
      * After this, the method will rearrange the data to match the fragmentation and update the metadata.
+     * It is assumed that there is no fragmentation present for the given table attribute combination
      * @param comp
      */
     private void makeFragmentationForComparisonExpression(ComparisonExpression comp) {
 
         // Decompose ComparisonExpression
         DereferenceExpression left = (DereferenceExpression) comp.getLeft();
+        String table = left.getBase().toString();
+        String attribute = left.getField().getValue();
         Expression right = comp.getRight();
+        int value = (int) ((LongLiteral) right).getValue();
         Operator op = comp.getOperator();
-
-        // Negate comp
-        ComparisonExpression negated = new ComparisonExpression(op.negate(), left, right);
+        Operator negop = op.negate();
 
 
-        // Update the metadata todo maybe transaction style?
-        int nextID = metaMakeNewFragment(left.getBase().toString(), "", 0,0);
+        // Update the metadata
+        Integer[] minMax = setMinMaxValue(op, value);
+        metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
 
+        // Set the second negated fragment
+        minMax = setMinMaxValue(negop, value);
+        metaMakeNewFragment(table, attribute, minMax[0], minMax[1]);
 
-
-
-        // Rearrange the data according to the new fragmentation: insert data into new fragments from all 'old'
-        // fragments
+        // TODO rearrangement
+        // Rearrange the data according to the new fragmentation: insert data into the new fragments from all 'old'
+        // fragments matching the selection condition of the fragment
 
 
 
@@ -627,13 +632,20 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
 
     /**
-     * Update the metadata and set a new fragment according to the arguments.
+     * Update the metadata and set a new fragment according to the arguments. If minvalue is null, it means that for all
+     * tuples in the fragment holds that attribute <= maxvalue, and if maxvalue is null, for all tuples in the fragment
+     * holds that attribute >= minvalue. If both are null, this is an error!
      * @param table Name of the table
      * @param attribute Name of the attribute
      * @param minvalue Minimum value of the fragment (inclusively)
      * @param maxvalue Maximum value of the fragment (inclusively)
      */
-    private void metaMakeNewFragment(String table, String attribute, int minvalue, int maxvalue) {
+    private void metaMakeNewFragment(String table, String attribute, Integer minvalue, Integer maxvalue) {
+
+        if (minvalue == null && maxvalue == null)
+            throw new IllegalArgumentException("The both arguments minvalue and maxvalue must not be null at the same" +
+                    " time!");
+
 
         // Find the next ID to be used to store a fragment of this table
         int nextID = 0;
@@ -644,16 +656,23 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
             if (res.next())
                 nextID = res.getInt(1) + 1;
 
-            System.out.println("Next ID is " + nextID); // DEBUG
 
-            // Store the fragment in the metadata table
+            // Store the fragment in the metadata table (with NULL value for minvalue or maxvalue if needed)
             prep = conn.prepareStatement("INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, MAXVALUE) VALUES " +
                     "(?,?,?,?,?)");
             prep.setInt(1, nextID);
             prep.setString(2, table);
             prep.setString(3, attribute);
-            prep.setInt(4, minvalue);
-            prep.setInt(5, maxvalue);
+            if (minvalue == null)
+                prep.setNull(4, Types.INTEGER);
+            else
+                prep.setInt(4, minvalue);
+            if (maxvalue == null)
+                prep.setNull(5, Types.INTEGER);
+            else
+                prep.setInt(5, maxvalue);
+
+            // Execute update
             int rowsupdated = prep.executeUpdate();
             if (rowsupdated != 1)
                 ;    //todo exception?
@@ -665,6 +684,41 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
 
     }
 
+
+    /**
+     * This method computes the minvalue and maxvalue to a given operator and a value.
+     * @param op Operator
+     * @param value Value
+     * @return Integer[] = {minvalue, maxvalue}
+     */
+    private Integer[] setMinMaxValue(Operator op, Integer value) {
+        Integer minvalue = null;
+        Integer maxvalue = null;
+        switch (op) {
+            case LESS_THAN:
+                maxvalue = value - 1;
+                break;
+            case LESS_THAN_OR_EQUAL:
+                maxvalue = value;
+                break;
+            case GREATER_THAN:
+                minvalue = value + 1;
+                break;
+            case GREATER_THAN_OR_EQUAL:
+                maxvalue = value;
+                break;
+            default :
+                throw new IllegalArgumentException("The given setMinMaxValue-Operation is not valid because it " +
+                        "contains an operator which is not <, <=, >, >=!");
+        }
+        Integer[] res = {minvalue, maxvalue};
+        return res;
+    }
+
+
+
+
+// ################################ DEBUG Stuff ###########################################
 
     /**
      * Prints the AST-Tree to the given expression to {@link System#out}

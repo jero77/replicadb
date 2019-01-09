@@ -46,14 +46,14 @@ public class Optimizer {
         // Metadata table
         stmt.executeUpdate("DROP TABLE IF EXISTS FRAGMETA; DROP TABLE IF EXISTS COMETA;");
         stmt.executeUpdate("CREATE TABLE FRAGMETA (ID INT, TABLE VARCHAR, ATTRIBUTE VARCHAR, " +
-                "MINVALUE INT, MAXVALUE INT) WITH \"template=replicated,backups=0\"");
+                "MINVALUE INT, MAXVALUE INT, PRIMARY KEY (ID, TABLE) ) WITH \"template=replicated,backups=0\"");
 
-        stmt.executeUpdate("CREATE TABLE COMETA (ID INT PRIMARY KEY, TABLE VARCHAR, JOINATTR VARCHAR, " +
-                "COTABLE VARCHAR, COJOIN VARCHAR) WITH \"template=replicated,backups=0\"");
+        stmt.executeUpdate("CREATE TABLE COMETA (ID INT, TABLE VARCHAR, JOINATTR VARCHAR, " +
+                "COTABLE VARCHAR, COJOIN VARCHAR, PRIMARY KEY (ID) ) WITH \"template=replicated,backups=0\"");
 
 
         // Store some meta-info
-        String insert = "INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, " + "MAXVALUE) VALUES (?, ?, ?, ?, ?)";
+        String insert = "INSERT INTO FRAGMETA (ID, TABLE, ATTRIBUTE, MINVALUE, MAXVALUE) VALUES (?, ?, ?, ?, ?)";
         PreparedStatement prep = conn.prepareStatement(insert);
         for (int i = 0; i < 5; i++) {
             // 5 fragments for TA on TA.AGE: 1-20, 21-40, etc.
@@ -87,8 +87,8 @@ public class Optimizer {
         System.out.println("\n");
 
 
-        // Query with 3 joined tables
-        sql = "SELECT * FROM TA, TB, TC WHERE TA.ID = TB.IDOFTA AND TA.ID = TC.IDOFTA";
+        // Query with selection without fragmentation
+        sql = "SELECT * FROM TA, TB WHERE TA.ID = TB.IDOFTA AND TA.ID > 10";
 
         // Analyze the query
         System.out.println(" --------------- Analyzation --------------- ");
