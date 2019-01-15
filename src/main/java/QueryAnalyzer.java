@@ -684,7 +684,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         try {
             // Insert for two new fragments
             insert = buildFragmentInsertString(table, fragID, attribute, op, value);
-//            PreparedStatement prep = conn.prepareStatement(insert);
+            PreparedStatement prep = conn.prepareStatement(insert);
 //            prep.executeUpdate();
             insert = buildFragmentInsertString(table, fragID, attribute, op, value);
 //            prep = conn.prepareStatement(insert);
