@@ -5,6 +5,9 @@ import org.apache.ignite.spi.discovery.tcp.ipfinder.vm.TcpDiscoveryVmIpFinder;
 
 import java.util.Arrays;
 
+/**
+ * This class starts a new Ignite node in the cluster
+ */
 public class IgniteStartNode {
 
     public static void start() {

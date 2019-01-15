@@ -16,19 +16,20 @@ import java.util.List;
 import static com.facebook.presto.sql.tree.ComparisonExpression.*;
 
 /**
- * This class provides the analysis for the selection condition of a query. It extends the class
- * {@link DefaultExpressionTraversalVisitor} to traverse the given SQL-Query containing a WHERE clause with the
- * provided method {@link QueryAnalyzer#analyzePrint(String)}
+ * This class provides the analysis for a query. It extends the class {@link DefaultExpressionTraversalVisitor} to
+ * traverse the given SQL-Query provided method {@link QueryAnalyzer#analyzePrint(String)} which prints out results
+ * that occur during analysis of the query. Furthermore, this class enables the combination of metadata and information
+ * of the query analysis to find matching fragmentations, create new fragmentations, ...
  */
 public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void> {
 
     /**
-     * Stores comparison expressions
+     * Stores comparison expressions for further analysis
      */
     private ArrayList<ComparisonExpression> comparisons;
 
     /**
-     * Stores the joins in the analyzed query found in WHERE clause
+     * Stores the joins in the analyzed query found in WHERE and FROM clause
      */
     private ArrayList<Join> joins;
 
@@ -41,7 +42,6 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
      * Saves the last analyzed SQL query
      */
     private String lastAnalyzedSql;
-
 
     /**
      * Connection to DB
@@ -521,12 +521,14 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
     }
 
 
-
+    /**
+     * Test the joins from the WHERE clause, e.g. WHERE ... AND T.a = S.b AND ..., whether the joined tables are
+     * co-partitioned on that attribute(s); if a co-partitioning is found, then the join is added with the id of the
+     * metadata tuple to the result HashMap
+     * @return Maps Joins to co-partition metadata tuple ids; null if no matching metadata tuple was found (i.e. the
+     *          joined tables are not co-partitioned)
+     */
     private HashMap<Join, Integer> testJoinsForCopartitions() {
-
-        // Test the joins from the WHERE clause, e.g. WHERE ... AND T.a = S.b AND ..., whether the joined tables are
-        // co-partitioned on that attribute(s); if a co-partitioning is found, then the join is added with the id of the
-        // metadata tuple to the result HashMap
 
         HashMap<Join, Integer> result = new HashMap<Join, Integer>();
 

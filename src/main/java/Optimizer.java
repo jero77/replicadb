@@ -12,10 +12,18 @@ import com.facebook.presto.sql.tree.*;
 import org.apache.ignite.*;
 import org.apache.ignite.internal.util.nodestart.IgniteNodeStartUtils;
 
+/**
+ * Right now just a test class
+ */
 public class Optimizer {
 
 
-
+    /**
+     * Test unit
+     * @param args
+     * @throws ClassNotFoundException
+     * @throws SQLException
+     */
     public static void main(String[] args) throws ClassNotFoundException, SQLException {
         /*
             SELECT ...
