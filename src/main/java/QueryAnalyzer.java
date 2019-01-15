@@ -670,8 +670,8 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         // Create the two fragment tables
         try {
             Statement stmt = conn.createStatement();
-            //stmt.execute(create);
-            //stmt.execute(negCreate);
+            stmt.execute(create);
+            stmt.execute(negCreate);
         } catch (SQLException e) {
             e.printStackTrace();
         }
@@ -680,11 +680,19 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         // TODO rearrangement
         // Rearrange the data according to the new fragmentation: insert data into the new fragments from all 'old'
         // fragments matching the selection condition of the fragment
-        String insert = buildFragmentInsertString(table, fragID);
+        String insert;
         try {
-            PreparedStatement prep = conn.prepareStatement(insert);
+            // Insert for two new fragments
+            insert = buildFragmentInsertString(table, fragID, attribute, op, value);
+//            PreparedStatement prep = conn.prepareStatement(insert);
+//            prep.executeUpdate();
+            insert = buildFragmentInsertString(table, fragID, attribute, op, value);
+//            prep = conn.prepareStatement(insert);
+//            prep.executeUpdate();
+            //todo where to execute queries?
         } catch (SQLException e) {
             e.printStackTrace();
+            System.exit(-1);
         }
 
 
@@ -817,9 +825,12 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
      * Builds an INSERT INTO SQL statement for a given table fragment
      * @param table Table name
      * @param fragID ID of the fragment (used in table name)
+     * @param attribute Attribute name
+     * @param op Operator in selection condition
+     * @param value int value in selection condition
      * @return SQL INSERT statement
      */
-    private String buildFragmentInsertString(String table, int fragID) {
+    private String buildFragmentInsertString(String table, int fragID, String attribute, Operator op, int value) {
 
         // Start to build
         StringBuilder insert = new StringBuilder("INSERT INTO " + table + "_" + fragID + " (");
@@ -827,7 +838,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         // Add column names of the table to the build
         ArrayList<String> columns = getColumnsFromTable(table);
         if (columns.size() < 1)
-            ;   // todo what to do? excpetion?
+            ;   // todo what to do? exception?
         insert.append(columns.remove(0).split(";")[0]);
         for (String s : columns) {
             insert.append("," + s.split(";")[0]);       // only name needed; type irrelevant here
@@ -835,7 +846,7 @@ public class QueryAnalyzer extends DefaultExpressionTraversalVisitor<Void, Void>
         insert.append(") ");
 
         // Add subquery with selection condition for fragment
-        insert.append("(SELECT * FROM " + table + " WHERE )");    // todo condition
+        insert.append("(SELECT * FROM " + table + " WHERE " + attribute + op.getValue() + value + ")");
 
         // return build
         System.out.println(insert.toString());      // DEBUG
